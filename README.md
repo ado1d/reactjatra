@@ -13,7 +13,7 @@ guided exercises, interview prep, and a bilingual AI tutor powered by Groq.
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS%204-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com)
 [![Groq](https://img.shields.io/badge/AI%20tutor-Groq-F55036?style=flat-square&logoColor=white)](https://groq.com)
 
-[Live Demo](#-live-demo) · [Curriculum](#-curriculum) · [Features](#-features) · [Quick Start](#-quick-start) · [Deploy](#-deploy-to-vercel)
+[**🔴 Live Demo — reactjatra.vercel.app**](https://reactjatra.vercel.app) · [Curriculum](#-curriculum) · [Features](#-features) · [Quick Start](#-quick-start) · [Deploy](#-deploy-to-vercel)
 
 <img src="docs/home.png" alt="ReactJatra homepage" width="800" />
 
@@ -74,7 +74,7 @@ The tutor is served by a Next.js API route that calls the **Groq API** (Llama 3.
 - **Tailwind CSS 4** + **shadcn/ui** + **Lucide icons** + **Framer Motion**
 - **[react-live](https://github.com/FormidableLabs/react-live)** for the in-browser playground
 - **[react-markdown](https://github.com/remarkjs/react-markdown)** + **react-syntax-highlighter** for lesson & AI content
-- **Groq API** (`llama-3.3-70b-versatile`) for the AI tutor, streamed through a server route
+- **Groq API** (`openai/gpt-oss-120b`, with automatic model fallbacks) for the AI tutor, streamed through a server route
 
 ## 🚀 Quick Start
 
@@ -103,7 +103,7 @@ Open <http://localhost:3000> and start with Day 0. That's it — the playground 
 | Variable | Required | Description |
 |---|---|---|
 | `GROQ_API_KEY` | ✅ for AI tutor | Groq API key — [get one free](https://console.groq.com/keys). Server-side only. |
-| `GROQ_MODEL` | ❌ | Override the model (default: `llama-3.3-70b-versatile`) |
+| `GROQ_MODEL` | ❌ | Override the model (default: `openai/gpt-oss-120b`) |
 
 ## 📦 Scripts
 
