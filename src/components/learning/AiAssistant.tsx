@@ -15,6 +15,8 @@ import {
   Bot,
   Check,
   Copy,
+  Maximize2,
+  Minimize2,
   RotateCcw,
   Send,
   Sparkles,
@@ -34,6 +36,19 @@ interface ChatMessage {
 }
 
 const STORAGE_KEY = "rj-ai-chat";
+const SIZE_KEY = "rj-ai-chat-size";
+
+/* Chat panel resizing constraints (px) */
+type ResizeMode = "top" | "left" | "corner";
+const MIN_W = 320;
+const MIN_H = 360;
+
+/** Clamp a width against the viewport (12px margin each side). */
+const clampW = (w: number) =>
+  Math.min(Math.max(w, MIN_W), Math.max(window.innerWidth - 24, MIN_W));
+/** Clamp a height against the viewport (panel sits above the FAB). */
+const clampH = (h: number) =>
+  Math.min(Math.max(h, MIN_H), Math.max(window.innerHeight - 128, MIN_H));
 
 const SUGGESTIONS: { en: string[]; bn: string[] } = {
   en: [
@@ -251,11 +266,19 @@ export function AiAssistant() {
   const [error, setError] = useState<string | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
 
+  /* resizable panel state (null size = responsive CSS default) */
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const [maximized, setMaximized] = useState(false);
+  const [dragging, setDragging] = useState<ResizeMode | null>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const sizeRef = useRef<{ w: number; h: number } | null>(null);
 
-  /* load persisted conversation (post-hydration) */
+  /* load persisted conversation + panel size (post-hydration) */
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -268,6 +291,17 @@ export function AiAssistant() {
               (m.role === "user" || m.role === "assistant") &&
               typeof m.content === "string"
           ));
+        }
+      }
+    } catch {
+      /* ignore corrupted storage */
+    }
+    try {
+      const rawSize = localStorage.getItem(SIZE_KEY);
+      if (rawSize) {
+        const parsed = JSON.parse(rawSize) as { w?: unknown; h?: unknown };
+        if (typeof parsed.w === "number" && typeof parsed.h === "number") {
+          setSize({ w: clampW(parsed.w), h: clampH(parsed.h) });
         }
       }
     } catch {
@@ -311,6 +345,48 @@ export function AiAssistant() {
       return () => clearTimeout(t);
     }
   }, [open]);
+
+  /* track desktop breakpoint — controls which resize handles & styles apply */
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 640px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  /* keep a ref of the latest size so pointerup can persist it */
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
+
+  /* re-clamp stored size when the viewport shrinks (rotate / window resize) */
+  useEffect(() => {
+    const onResize = () => {
+      setSize((s) => {
+        if (!s) return s;
+        const w = clampW(s.w);
+        const h = clampH(s.h);
+        if (w === s.w && h === s.h) return s;
+        return { w, h };
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  /* global cursor + text-selection lock while dragging a resize handle */
+  useEffect(() => {
+    if (!dragging) return;
+    const cursor =
+      dragging === "top" ? "ns-resize" : dragging === "left" ? "ew-resize" : "nwse-resize";
+    document.body.style.cursor = cursor;
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [dragging]);
 
   /* ── send a message ── */
   const send = useCallback(
@@ -441,6 +517,96 @@ export function AiAssistant() {
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
+  /* ── panel resizing ── */
+
+  /** Double-click any handle to go back to the responsive default size. */
+  const resetSize = useCallback(() => {
+    setSize(null);
+    try {
+      localStorage.removeItem(SIZE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /* last pointerdown per handle — used for manual double-click detection
+     (preventDefault on pointerdown suppresses the native dblclick event) */
+  const lastDownRef = useRef<{
+    t: number;
+    x: number;
+    y: number;
+    mode: ResizeMode;
+  } | null>(null);
+
+  /** Begin dragging a resize handle. Works for mouse + touch via Pointer Events. */
+  const startResize = useCallback(
+    (mode: ResizeMode) => (e: React.PointerEvent<HTMLDivElement>) => {
+      if (maximized) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      const el = panelRef.current;
+      if (!el) return;
+
+      /* quick second tap on the same handle → reset to default size */
+      const now = performance.now();
+      const last = lastDownRef.current;
+      if (
+        last &&
+        last.mode === mode &&
+        now - last.t < 400 &&
+        Math.hypot(e.clientX - last.x, e.clientY - last.y) < 12
+      ) {
+        lastDownRef.current = null;
+        resetSize();
+        return;
+      }
+      lastDownRef.current = { t: now, x: e.clientX, y: e.clientY, mode };
+
+      e.preventDefault();
+
+      const rect = el.getBoundingClientRect();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = rect.width;
+      const startH = rect.height;
+      setDragging(mode);
+
+      const onMove = (ev: PointerEvent) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        // panel is anchored bottom-right, so dragging left/up grows it
+        const w = mode === "top" ? clampW(startW) : clampW(startW - dx);
+        const h = mode === "left" ? clampH(startH) : clampH(startH - dy);
+        setSize({ w, h });
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        setDragging(null);
+        try {
+          if (sizeRef.current) {
+            localStorage.setItem(SIZE_KEY, JSON.stringify(sizeRef.current));
+          }
+        } catch {
+          /* storage unavailable */
+        }
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [maximized, resetSize]
+  );
+
+  /* inline size only once the user has resized (CSS classes are the default) */
+  const panelStyle = useMemo(() => {
+    if (maximized || !size) return undefined;
+    const h = clampH(size.h);
+    return isDesktop ? { width: clampW(size.w), height: h } : { height: h };
+  }, [size, isDesktop, maximized]);
+
   const suggestions = SUGGESTIONS[lang];
   const isBengali = lang === "bn";
 
@@ -482,14 +648,18 @@ export function AiAssistant() {
           <motion.div
             role="dialog"
             aria-label={UI.aiTutorName[lang]}
+            ref={panelRef}
             initial={{ opacity: 0, y: 24, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 24, scale: 0.97 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
+            style={panelStyle}
             className={cn(
               "fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/95 shadow-2xl shadow-black/50 backdrop-blur-xl",
-              "inset-x-3 bottom-3 h-[72dvh]",
-              "sm:inset-x-auto sm:bottom-24 sm:right-5 sm:h-[min(640px,calc(100dvh-8rem))] sm:w-[410px]"
+              maximized
+                ? "inset-2 sm:inset-4"
+                : "inset-x-3 bottom-3 h-[72dvh] sm:inset-x-auto sm:bottom-24 sm:right-5 sm:h-[min(640px,calc(100dvh-8rem))] sm:w-[410px]",
+              dragging && "select-none"
             )}
           >
             {/* Header */}
@@ -512,6 +682,18 @@ export function AiAssistant() {
                 </span>
               )}
               <button
+                onClick={() => setMaximized((m) => !m)}
+                aria-label={maximized ? UI.aiRestore[lang] : UI.aiMaximize[lang]}
+                title={maximized ? UI.aiRestore[lang] : UI.aiMaximize[lang]}
+                className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-cyan-300"
+              >
+                {maximized ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </button>
+              <button
                 onClick={clearChat}
                 aria-label={UI.aiClear[lang]}
                 title={UI.aiClear[lang]}
@@ -532,7 +714,10 @@ export function AiAssistant() {
             {/* Messages */}
             <div
               ref={scrollRef}
-              className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+              className={cn(
+                "flex-1 space-y-4 overflow-y-auto px-4 py-4",
+                maximized && "mx-auto w-full max-w-3xl"
+              )}
             >
               {messages.length === 0 && !busy && (
                 <div className="space-y-4">
@@ -618,7 +803,12 @@ export function AiAssistant() {
 
             {/* Input area */}
             <div className="border-t border-slate-800 bg-slate-900/80 p-3">
-              <div className="flex items-end gap-2">
+              <div
+                className={cn(
+                  "flex items-end gap-2",
+                  maximized && "mx-auto w-full max-w-3xl"
+                )}
+              >
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -658,10 +848,65 @@ export function AiAssistant() {
                   </button>
                 )}
               </div>
-              <p className={cn("mt-2 text-center text-[10px] text-slate-500", isBengali && "font-bengali")}>
+              <p
+                className={cn(
+                  "mt-2 text-center text-[10px] text-slate-500",
+                  isBengali && "font-bengali",
+                  maximized && "mx-auto max-w-3xl"
+                )}
+              >
                 {UI.aiDisclaimer[lang]} · {UI.aiPoweredBy[lang]}
               </p>
             </div>
+
+            {/* Resize handles (hidden while maximized) */}
+            {!maximized && (
+              <>
+                {/* Top edge — height (all screens) */}
+                <div
+                  role="separator"
+                  aria-label={UI.aiResizeHint[lang]}
+                  title={UI.aiResizeHint[lang]}
+                  onPointerDown={startResize("top")}
+                  onDoubleClick={resetSize}
+                  className="group absolute left-4 right-4 top-0 z-20 flex h-2.5 cursor-ns-resize touch-none items-start justify-center"
+                >
+                  <span className="mt-0.5 h-[3px] w-10 rounded-full bg-slate-600/80 transition-colors group-hover:bg-cyan-400" />
+                </div>
+                {/* Left edge — width (desktop) */}
+                <div
+                  role="separator"
+                  aria-label={UI.aiResizeHint[lang]}
+                  title={UI.aiResizeHint[lang]}
+                  onPointerDown={startResize("left")}
+                  onDoubleClick={resetSize}
+                  className="group absolute bottom-10 left-0 top-10 z-20 hidden w-2.5 cursor-ew-resize touch-none items-center justify-center sm:flex"
+                >
+                  <span className="h-9 w-[3px] rounded-full bg-slate-600/0 transition-colors group-hover:bg-cyan-400" />
+                </div>
+                {/* Top-left corner — both (desktop) */}
+                <div
+                  role="separator"
+                  aria-label={UI.aiResizeHint[lang]}
+                  title={UI.aiResizeHint[lang]}
+                  onPointerDown={startResize("corner")}
+                  onDoubleClick={resetSize}
+                  className="group absolute left-0 top-0 z-20 hidden h-6 w-6 cursor-nwse-resize touch-none items-start justify-start sm:flex"
+                >
+                  <svg
+                    className="ml-1 mt-1 text-slate-500 transition-colors group-hover:text-cyan-400"
+                    width="9"
+                    height="9"
+                    viewBox="0 0 9 9"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <line x1="7.5" y1="1.5" x2="1.5" y2="7.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                    <line x1="7.5" y1="5" x2="5" y2="7.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  </svg>
+                </div>
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

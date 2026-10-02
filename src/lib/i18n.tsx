@@ -147,6 +147,12 @@ export const UI = {
   aiStop: { en: "Stop generating", bn: "থামান" },
   aiClear: { en: "Clear conversation", bn: "কথোপকথন মুছে ফেলুন" },
   aiClose: { en: "Close chat", bn: "চ্যাট বন্ধ করুন" },
+  aiMaximize: { en: "Expand chat", bn: "চ্যাট বড় করুন" },
+  aiRestore: { en: "Restore chat size", bn: "চ্যাটের আকার ফিরিয়ে আনুন" },
+  aiResizeHint: {
+    en: "Drag to resize — double-click to reset",
+    bn: "টেনে আকার বদলান — ডাবল-ক্লিক করলে রিসেট হবে",
+  },
   aiRetry: { en: "Retry", bn: "আবার চেষ্টা করুন" },
   aiError: {
     en: "Something went wrong. Please try again.",
