@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
@@ -28,6 +29,7 @@ import {
 import { useLang, UI } from "@/lib/i18n";
 import { useHashRoute } from "@/lib/router";
 import { getDay } from "@/content";
+import { fixAiMarkdown } from "@/lib/markdown-fix";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -101,6 +103,7 @@ function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="text-sm leading-relaxed">
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           pre: ({ children }) => <>{children}</>,
           code({ className, children, ...props }) {
@@ -155,9 +158,33 @@ function MarkdownContent({ content }: { content: string }) {
               {children}
             </blockquote>
           ),
+          /* GFM tables — styled for the dark chat panel, scrollable when wide */
+          table: ({ children }) => (
+            <div className="my-2.5 overflow-x-auto rounded-lg border border-slate-700/60 bg-slate-800/30">
+              <table className="w-full min-w-max border-collapse text-left text-xs leading-snug">
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-slate-800/70">{children}</thead>
+          ),
+          tr: ({ children }) => (
+            <tr className="border-b border-slate-700/50 last:border-b-0">
+              {children}
+            </tr>
+          ),
+          th: ({ children }) => (
+            <th className="whitespace-nowrap px-2.5 py-2 font-semibold text-cyan-200">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-2.5 py-2 align-top text-slate-300">{children}</td>
+          ),
         }}
       >
-        {content}
+        {fixAiMarkdown(content)}
       </ReactMarkdown>
     </div>
   );
